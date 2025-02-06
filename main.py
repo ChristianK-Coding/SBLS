@@ -14,8 +14,7 @@ import torch.nn as nn
 
 import datetime
 
-from bad_sbls import BadSBLS
-from sbls2 import SBLS2
+from sbls import SBLS2
 
 # os.system('clear')
 
