@@ -72,33 +72,11 @@ class SBLS2:
 
     def __calc_A(self, input: torch.Tensor) -> torch.Tensor:
 
-        # print("input")
-        # print(input.shape)
-        # show_img(input)
-
         Z_pre = torch.matmul(input, self.W1) + self.B1
-
-        # print("Z_pre")
-        # print(Z_pre.shape)
-        # show_img(Z_pre)
-
-        # normalize to range [0; 1]
-        # min = Z_pre.min(1, keepdim = True)[0]
-        # max = Z_pre.max(1, keepdim = True)[0]
-        # Z_intermediate = (Z_pre - min) / (max - min)
 
         Z_post = self.spikegen(Z_pre, num_steps=self.simulation_steps)
 
-        # print("Z_post")
-        # print(Z_post.shape)
-
-        # print(Z_post)
-
         H_pre = torch.einsum('abc,cd->abd', Z_post, self.W2) + self.B2
-
-        # print("H_pre")
-        # print(H_pre.shape)
-        # show_img(H_pre.view(batch_size_train, -1))
 
         h_post_list = []
 
@@ -107,13 +85,8 @@ class SBLS2:
             h_post_list.append(h_post)
 
         H_post = torch.stack(h_post_list, dim=0)
-
-        # print("H_post")
-        # print(H_post.shape)
          
         A = self.__aggregate(torch.cat((Z_post, H_post), 2))
-
-        # show_img(A)
 
         return A
 
@@ -148,20 +121,8 @@ class SBLS2:
             B = torch.linalg.solve((torch.eye(D_T.shape[0]) + D_T @ D_T.T).T, (self.A_cross_old @ D_T.T).T).T
   
             self.A_cross_old = torch.cat((self.A_cross_old - torch.mm(B, D_T), B), 1)  # TODO: check this again, it was late when I wrote this
-            # print(f"A_cross_new: {A_cross_new.shape}")
 
             self.W3 = self.W3 + torch.mm(B, Y - torch.mm(A_x, self.W3))
-            # print(f"W3: {self.W3.shape}")
-            # print(self.W3[:,0])
-
-
-        # print("W3")
-        # print(self.W3.shape)
-        # show_img(self.W3)
-        # show_img(self.W3 == 0.0)
-
-        # print(f"A_old: {self.A_old.size()}")
-        # print(f"A_cross_old: {self.A_cross_old.size()}")
 
         # increase training data count
         print(f"num samples before: {self.training_samples}")
