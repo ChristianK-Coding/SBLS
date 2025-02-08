@@ -25,9 +25,9 @@ class SBLS2:
         self.enhancement_nodes = initial_enhancement_size
         self.training_samples = 0
 
-        self.first_data_batch = True
-        self.A_old  = None
-        self.A_cross_old = None  # Most important member, the pseudo-inverse of matrix A. Is used to calculate the optimal W3 according to ridge regression based on training data. Upon adding new training data or adding nodes in the network, it can be incrementally updated
+        self.initialized = False    # Initialization state of the network. Upon creation, the final layer will still be random. Only when feeding data will W3 be solved to minimize the Least-Squares-Error. add_enhancement_nodes(), add_feature_nodes() and simpify() are only available when initialized = True.
+        self.Y_old = None           # stores old target values of training data for future optimization
+        self.A_cross_old = None     # Most important member, the pseudo-inverse of matrix A. Is used to calculate the optimal W3 according to ridge regression based on training data. Upon adding new training data or adding nodes in the network, it can be incrementally updated
 
         # initialize weights and biases
         weight_range_W1 = math.sqrt(1/self.input_size)
@@ -104,20 +104,24 @@ class SBLS2:
         Y = nn.functional.one_hot(target, num_classes=10).float()
 
         # if this is the first batch of data, A_new, A_cross_new and W3 are computed differently than if not
-        if self.first_data_batch:
-            # Solve Y = A_x @ W3 for W3 with least squares (equivalent to W_3 = A_x^+(Pseudo-Inverse) @ Y)
-            # self.A_old = A_x
+        if not self.initialized:
+            # store target vector for future improvement and expansion of the network
+            self.Y_old = target
+
+            # Solve Y = A_x @ W3 for W3 with least squares, equivalent to W_3 = A_x^+ @ Y (where A_x^+ is the Moore-Penrose-Peudoinverse of A_x)
             self.A_cross_old = torch.pinverse(A_x)
             self.W3 = self.A_cross_old @ Y
 
-            self.first_data_batch = False
+            # set initialized to true to signal that the network is not ouputting random answers anymore. This makes add_enhancement_nodes(), add_feature_nodes() and simpify() available.
+            self.initialized = True
 
         else:
-            # self.A_old = torch.cat((self.A_old, A_x), 0)
+            # store target vector for future improvement and expansion of the network
+            torch.cat(self.Y_old, target)
 
             D_T = torch.mm(A_x, self.A_cross_old)
+
             # The below code calculates B = A_cross_old * D * (I + D_T * D)^-1
-            
             B = torch.linalg.solve((torch.eye(D_T.shape[0]) + D_T @ D_T.T).T, (self.A_cross_old @ D_T.T).T).T
   
             self.A_cross_old = torch.cat((self.A_cross_old - torch.mm(B, D_T), B), 1)  # TODO: check this again, it was late when I wrote this
@@ -128,3 +132,22 @@ class SBLS2:
         print(f"num samples before: {self.training_samples}")
         self.training_samples += input.shape[0]
         print(f"num samples after: {self.training_samples}")
+
+
+    def add_feature_nodes(self):
+        # check if network is initialized
+        if not self.initialized:
+            raise Exception("Cannot add nodes while network is not initialized! Initialize by adding some training data.")
+
+    def add_enhancement_nodes(self, expansion_size: int):
+        # check if network is initialized
+        if not self.initialized:
+            raise Exception("Cannot add nodes while network is not initialized! Initialize by adding some training data.")
+
+        Z_out = 
+        D = self.A_cross_old @ 
+    
+    def simplify(self):
+        # check if network is initialized
+        if not self.initialized:
+            raise Exception("Cannot simplify while network is not initialized! Initialize by adding some training data.")
