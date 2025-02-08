@@ -58,7 +58,7 @@ class SBLS2:
         # print("A")
         # print(A.shape)
 
-        return torch.softmax(torch.mm(A, self.W3), 1)
+        return torch.softmax(A @ self.W3, 1)
 
     
     def __aggregate(self, A: torch.Tensor) -> torch.Tensor:
@@ -72,7 +72,7 @@ class SBLS2:
 
     def __calc_A(self, input: torch.Tensor) -> torch.Tensor:
 
-        Z_pre = torch.matmul(input, self.W1) + self.B1
+        Z_pre = input @ self.W1 + self.B1
 
         Z_post = self.spikegen(Z_pre, num_steps=self.simulation_steps)
 
@@ -119,14 +119,14 @@ class SBLS2:
             # store target vector for future improvement and expansion of the network
             torch.cat(self.Y_old, target)
 
-            D_T = torch.mm(A_x, self.A_cross_old)
+            D_T = A_x @ self.A_cross_old
 
             # The below code calculates B = A_cross_old * D * (I + D_T * D)^-1
             B = torch.linalg.solve((torch.eye(D_T.shape[0]) + D_T @ D_T.T).T, (self.A_cross_old @ D_T.T).T).T
   
-            self.A_cross_old = torch.cat((self.A_cross_old - torch.mm(B, D_T), B), 1)  # TODO: check this again, it was late when I wrote this
+            self.A_cross_old = torch.cat((self.A_cross_old - B @ D_T, B), 1)
 
-            self.W3 = self.W3 + torch.mm(B, Y - torch.mm(A_x, self.W3))
+            self.W3 = self.W3 + B @ (Y - A_x @ self.W3)
 
         # increase training data count
         print(f"num samples before: {self.training_samples}")
