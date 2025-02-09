@@ -144,7 +144,6 @@ class SBLS2:
         if not self.initialized:
             raise Exception("Cannot add nodes while network is not initialized! Initialize by adding some training data.")
 
-        Z_out = 
         D = self.A_cross_old @ 
     
     def simplify(self):
