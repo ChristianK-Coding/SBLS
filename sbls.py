@@ -21,26 +21,27 @@ class SBLS2:
         self.input_size = input_size
         self.output_size = output_size
         self.simulation_steps = simulation_steps
-        self.feature_nodes = initital_feature_size
-        self.enhancement_nodes = initial_enhancement_size
+        self.num_feature_nodes = initital_feature_size
+        self.num_enhancement_nodes = initial_enhancement_size
         self.training_samples = 0
 
         self.initialized = False    # Initialization state of the network. Upon creation, the final layer will still be random. Only when feeding data will W3 be solved to minimize the Least-Squares-Error. add_enhancement_nodes(), add_feature_nodes() and simpify() are only available when initialized = True.
+        self.A_old = None
         self.Y_old = None           # stores old target values of training data for future optimization
         self.A_cross_old = None     # Most important member, the pseudo-inverse of matrix A. Is used to calculate the optimal W3 according to ridge regression based on training data. Upon adding new training data or adding nodes in the network, it can be incrementally updated
 
         # initialize weights and biases
-        weight_range_W1 = math.sqrt(1/self.input_size)
-        weight_range_W2 = math.sqrt(1/self.feature_nodes)
-        weight_range_W3 = math.sqrt(1/(self.simulation_steps * (self.feature_nodes + self.enhancement_nodes)))
+        self.weight_range_W1 = math.sqrt(1/self.input_size)
+        self.weight_range_W2 = math.sqrt(1/self.num_feature_nodes)
+        self.weight_range_W3 = math.sqrt(1/(self.simulation_steps * (self.num_feature_nodes + self.num_enhancement_nodes)))
 
-        self.W1 = torch.zeros((self.input_size, self.feature_nodes)).uniform_(-weight_range_W1, weight_range_W1)
-        self.B1 = torch.zeros((self.feature_nodes)).uniform_(-weight_range_W1, weight_range_W1)
+        self.W1 = torch.zeros((self.input_size, self.num_feature_nodes)).uniform_(-self.weight_range_W1, self.weight_range_W1)
+        self.B1 = torch.zeros((self.num_feature_nodes)).uniform_(-self.weight_range_W1, self.weight_range_W1)
 
-        self.W2 = torch.zeros((self.feature_nodes, self.enhancement_nodes)).uniform_(-weight_range_W2, weight_range_W2)
-        self.B2 = torch.zeros(self.enhancement_nodes).uniform_(-weight_range_W2, weight_range_W2)
+        self.W2 = torch.zeros((self.num_feature_nodes, self.num_enhancement_nodes)).uniform_(-self.weight_range_W2, self.weight_range_W2)
+        self.B2 = torch.zeros(self.num_enhancement_nodes).uniform_(-self.weight_range_W2, self.weight_range_W2)
 
-        self.W3 = torch.zeros((self.feature_nodes + self.enhancement_nodes, self.output_size)).uniform_(-weight_range_W3, weight_range_W3)
+        self.W3 = torch.zeros((self.num_feature_nodes + self.num_enhancement_nodes, self.output_size)).uniform_(-self.weight_range_W3, self.weight_range_W3)
 
         # initialize spikegen and LIF
 
@@ -107,8 +108,8 @@ class SBLS2:
         if not self.initialized:
             # store target vector for future improvement and expansion of the network
             self.Y_old = target
-
             # Solve Y = A_x @ W3 for W3 with least squares, equivalent to W_3 = A_x^+ @ Y (where A_x^+ is the Moore-Penrose-Peudoinverse of A_x)
+            self.A_old = A_x
             self.A_cross_old = torch.pinverse(A_x)
             self.W3 = self.A_cross_old @ Y
 
@@ -117,7 +118,8 @@ class SBLS2:
 
         else:
             # store target vector for future improvement and expansion of the network
-            torch.cat(self.Y_old, target)
+            torch.cat((self.Y_old, target))
+            torch.cat((self.A_old, A_x))
 
             D_T = A_x @ self.A_cross_old
 
@@ -138,13 +140,51 @@ class SBLS2:
         # check if network is initialized
         if not self.initialized:
             raise Exception("Cannot add nodes while network is not initialized! Initialize by adding some training data.")
+        
+        
 
     def add_enhancement_nodes(self, expansion_size: int):
         # check if network is initialized
         if not self.initialized:
             raise Exception("Cannot add nodes while network is not initialized! Initialize by adding some training data.")
 
-        D = self.A_cross_old @ 
+        # retrieve old Z_post (output from the feature layer)
+        Z_post = self.A_old[:self.num_feature_nodes]
+
+        # generate new random weights between the feature layer and the new enhancement nodes
+        W2_x = torch.zeros((self.num_feature_nodes, expansion_size)).uniform_(-self.weight_range_W2, self.weight_range_W2)
+        B2_x = torch.zeros(expansion_size).uniform_(-self.weight_range_W2, self.weight_range_W2)
+
+        # calculate the output of the new nodes
+        H_pre_x = torch.einsum('abc,cd->abd', Z_post, W2_x) + B2_x
+
+        h_post_x_list = []
+
+        for elem in H_pre_x:
+            h_post_x = self.lif(elem)
+            h_post_x_list.append(h_post_x)
+
+        H_post_x = torch.stack(h_post_x_list, dim=0)
+
+        H_post_x_compact = self.__aggregate(H_post_x)
+
+        # extend self.W2 and self.B2 with the new random ones
+        torch.cat((self.W2, W2_x), dim=0)
+        torch.cat((self.B2, B2_x), dim=0)
+
+        # extend A_old with the new enhancement layer output
+        torch.cat((self.A_old, H_post_x_compact), dim=1)
+
+        # calculate the new pseudoinverse incrementally
+        D = self.A_cross_old @ H_post_x_compact
+        B = torch.linalg.solve(torch.eye(D.shape[0]) + D.T @ D, D.T @ self.A_cross_old)
+
+        self.A_cross_old = torch.cat((self.A_cross_old - D @ B, B), dim=0)
+
+        # update W3 incrementally
+        Y = nn.functional.one_hot(self.Y_old, num_classes=10).float()
+
+        self.W3 = torch.cat((self.W3 - D @ B @ Y, B @ Y), dim=0)
     
     def simplify(self):
         # check if network is initialized
