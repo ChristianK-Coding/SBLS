@@ -17,12 +17,13 @@ def show_img(img):
     plot.show()
 
 class SBLS2:
-    def __init__(self, input_size: int, output_size: int, simulation_steps: int, initital_feature_size: int, initial_enhancement_size: int):
+    def __init__(self, input_size: int, output_size: int, simulation_steps: int, initital_feature_size: int, initial_enhancement_size_per_window: int, initial_enhancement_window_num: int):
         self.input_size = input_size
         self.output_size = output_size
         self.simulation_steps = simulation_steps
         self.num_feature_nodes = initital_feature_size
-        self.num_enhancement_nodes = initial_enhancement_size
+        self.num_enhancement_windows = initial_enhancement_window_num
+        self.enhancement_nodes_per_window = initial_enhancement_size_per_window
         self.training_samples = 0
 
         self.initialized = False    # Initialization state of the network. Upon creation, the final layer will still be random. Only when feeding data will W3 be solved to minimize the Least-Squares-Error. add_enhancement_nodes(), add_feature_nodes() and simpify() are only available when initialized = True.
@@ -33,15 +34,22 @@ class SBLS2:
         # initialize weights and biases
         self.weight_range_W1 = math.sqrt(1/self.input_size)
         self.weight_range_W2 = math.sqrt(1/self.num_feature_nodes)
-        self.weight_range_W3 = math.sqrt(1/(self.simulation_steps * (self.num_feature_nodes + self.num_enhancement_nodes)))
+        self.weight_range_W3 = math.sqrt(1/(self.num_feature_nodes + self.num_enhancement_windows * self.enhancement_nodes_per_window))
 
         self.W1 = torch.zeros((self.input_size, self.num_feature_nodes)).uniform_(-self.weight_range_W1, self.weight_range_W1)
         self.B1 = torch.zeros((self.num_feature_nodes)).uniform_(-self.weight_range_W1, self.weight_range_W1)
 
-        self.W2 = torch.zeros((self.num_feature_nodes, self.num_enhancement_nodes)).uniform_(-self.weight_range_W2, self.weight_range_W2)
-        self.B2 = torch.zeros(self.num_enhancement_nodes).uniform_(-self.weight_range_W2, self.weight_range_W2)
+        # The ehancement layer should be large (1000 nodes at very least). Because all datapoints should be passed at once (60.000 for MNIST e.g.), the enhancement layer values would consume 24GB RAM, which is too much for general hardware.
+        # So instead, the enhancement layer is split into windows, which are calculated sequentially
+        # self.W2 = torch.zeros((self.num_feature_nodes, self.num_enhancement_nodes)).uniform_(-self.weight_range_W2, self.weight_range_W2)
+        self.W2_list = []
+        self.B2_list = []
 
-        self.W3 = torch.zeros((self.num_feature_nodes + self.num_enhancement_nodes, self.output_size)).uniform_(-self.weight_range_W3, self.weight_range_W3)
+        for i in range(self.num_enhancement_windows):  
+            self.W2_list.append(torch.zeros((self.num_feature_nodes, self.enhancement_nodes_per_window)).uniform_(-self.weight_range_W2, self.weight_range_W2))
+            self.B2_list.append(torch.zeros(self.enhancement_nodes_per_window).uniform_(-self.weight_range_W2, self.weight_range_W2))
+
+        self.W3 = torch.zeros((self.num_feature_nodes + self.num_enhancement_windows * self.enhancement_nodes_per_window, self.output_size)).uniform_(-self.weight_range_W3, self.weight_range_W3)
 
         # initialize spikegen and LIF
 
@@ -62,8 +70,8 @@ class SBLS2:
         return torch.softmax(A @ self.W3, 1)
 
     
-    def __aggregate(self, A: torch.Tensor) -> torch.Tensor:
-        tmp = torch.einsum("ijk -> jk", A)
+    def __aggregate(self, tensor: torch.Tensor) -> torch.Tensor:
+        tmp = tensor.sum(dim=0)
 
         min, _ = torch.min(tmp, 1, keepdim=True)
         max, _ = torch.max(tmp, 1, keepdim=True)
@@ -75,19 +83,51 @@ class SBLS2:
 
         Z_pre = input @ self.W1 + self.B1
 
+        print("test1.1")
+
         Z_post = self.spikegen(Z_pre, num_steps=self.simulation_steps)
 
-        H_pre = torch.einsum('abc,cd->abd', Z_post, self.W2) + self.B2
+        print("test1.2")
 
-        h_post_list = []
+        # H_pre = torch.einsum('abc,cd->abd', Z_post, self.W2) + self.B2
+        # H_pre = Z_post @ self.W2 + self.B2      # TODO: this NEEEDS to be parallelized because of memory issues. The resulting matrix would be 48GB if we use 60.000 samples, 2000 enhancement nodes and 30 timesteps
 
-        for elem in H_pre:
-            h_post = self.lif(elem)
-            h_post_list.append(h_post)
+        h_post_total_list = []
 
-        H_post = torch.stack(h_post_list, dim=0)
-         
-        A = self.__aggregate(torch.cat((Z_post, H_post), 2))
+        for w2_window, b2_window in zip(self.W2_list, self.B2_list):
+
+            H_pre_window = torch.einsum('abc,cd->abd', Z_post, w2_window) + b2_window
+
+            print("test1.3")
+
+            h_post_window_list = []
+
+            # feed every timestep into LIF-Neuron
+            for elem in H_pre_window:
+                h_post_window_list.append(self.lif(elem))   # h_post = self.lif(elem)
+
+
+            print("test1.4")
+
+            # stack timesteps along 0 dim to create new dimension (time x num_samples x layer_size), then aggregate to remove time dimension, then append to total list
+            # x = torch.stack(h_post_window_list, dim=0)
+
+            # aggregate to remove time dimension
+            # x_agg = self.__aggregate(torch.stack(h_post_window_list, dim=0))
+
+            # append to total list
+            h_post_total_list.append(self.__aggregate(torch.stack(h_post_window_list, dim=0)))
+
+        print("test1.5")
+
+        # concatenate Z_post and h_post_total_list along dim 1 (layer size)
+        test = []
+        test.append(self.__aggregate(Z_post))
+        test.extend(h_post_total_list)
+
+        A = torch.cat(test, 1)
+
+        print("test1.6")
 
         return A
 
@@ -97,10 +137,15 @@ class SBLS2:
         
         input, target = data
 
+        print("input size")
+        print(input.element_size() * input.nelement() / 1000000)
+
         input = torch.reshape(input, (-1, self.input_size))
 
         # compute A_x for new data
+        print("test1")
         A_x = self.__calc_A(input)
+        print("test2")
         # encode Y as a one-hot vector of targets
         Y = nn.functional.one_hot(target, num_classes=10).float()
 
