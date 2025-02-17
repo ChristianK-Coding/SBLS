@@ -95,8 +95,6 @@ class SBLS2:
             # stack timesteps along 0 dim to create new dimension (time x num_samples x layer_size), then aggregate to remove time dimension, then append to total list
             h_post_total_list.append(self.__aggregate(torch.stack(h_post_window_list, dim=0)))
 
-        print("test1.5")
-
         # concatenate Z_post and h_post_total_list along dim 1 (layer size) to create A
         Z_post = [self.__aggregate(Z_post)]
         Z_post.extend(h_post_total_list)
