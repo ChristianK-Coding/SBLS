@@ -64,9 +64,6 @@ class SBLS2:
 
         A = self.__calc_A(input)
 
-        # print("A")
-        # print(A.shape)
-
         return torch.softmax(A @ self.W3, 1)
 
     
@@ -81,16 +78,7 @@ class SBLS2:
 
     def __calc_A(self, input: torch.Tensor) -> torch.Tensor:
 
-        Z_pre = input @ self.W1 + self.B1
-
-        print("test1.1")
-
-        Z_post = self.spikegen(Z_pre, num_steps=self.simulation_steps)
-
-        print("test1.2")
-
-        # H_pre = torch.einsum('abc,cd->abd', Z_post, self.W2) + self.B2
-        # H_pre = Z_post @ self.W2 + self.B2      # TODO: this NEEEDS to be parallelized because of memory issues. The resulting matrix would be 48GB if we use 60.000 samples, 2000 enhancement nodes and 30 timesteps
+        Z_post = self.spikegen(input @ self.W1 + self.B1, num_steps=self.simulation_steps)  # Z_pre = input @ self.W1 + self.B1
 
         h_post_total_list = []
 
@@ -98,63 +86,43 @@ class SBLS2:
 
             H_pre_window = torch.einsum('abc,cd->abd', Z_post, w2_window) + b2_window
 
-            print("test1.3")
-
             h_post_window_list = []
 
-            # feed every timestep into LIF-Neuron
-            for elem in H_pre_window:
-                h_post_window_list.append(self.lif(elem))   # h_post = self.lif(elem)
-
-
-            print("test1.4")
+            # feed timesteps sequentially into LIF-Neuron
+            for timestep in H_pre_window:
+                h_post_window_list.append(self.lif(timestep))   # h_post = self.lif(elem)
 
             # stack timesteps along 0 dim to create new dimension (time x num_samples x layer_size), then aggregate to remove time dimension, then append to total list
-            # x = torch.stack(h_post_window_list, dim=0)
-
-            # aggregate to remove time dimension
-            # x_agg = self.__aggregate(torch.stack(h_post_window_list, dim=0))
-
-            # append to total list
             h_post_total_list.append(self.__aggregate(torch.stack(h_post_window_list, dim=0)))
 
         print("test1.5")
 
-        # concatenate Z_post and h_post_total_list along dim 1 (layer size)
-        test = []
-        test.append(self.__aggregate(Z_post))
-        test.extend(h_post_total_list)
+        # concatenate Z_post and h_post_total_list along dim 1 (layer size) to create A
+        Z_post = [self.__aggregate(Z_post)]
+        Z_post.extend(h_post_total_list)
 
-        A = torch.cat(test, 1)
-
-        print("test1.6")
-
-        return A
-
+        return torch.cat(Z_post, 1)
 
 
     def add_new_data(self, data: list[torch.Tensor, torch.Tensor]):
         
         input, target = data
 
-        print("input size")
-        print(input.element_size() * input.nelement() / 1000000)
-
         input = torch.reshape(input, (-1, self.input_size))
 
         # compute A_x for new data
-        print("test1")
         A_x = self.__calc_A(input)
-        print("test2")
+
         # encode Y as a one-hot vector of targets
         Y = nn.functional.one_hot(target, num_classes=10).float()
 
         # if this is the first batch of data, A_new, A_cross_new and W3 are computed differently than if not
         if not self.initialized:
-            # store target vector for future improvement and expansion of the network
-            self.Y_old = target
-            # Solve Y = A_x @ W3 for W3 with least squares, equivalent to W_3 = A_x^+ @ Y (where A_x^+ is the Moore-Penrose-Peudoinverse of A_x)
+            # store input matrix and target vector for future improvement and expansion of the network
             self.A_old = A_x
+            self.Y_old = target
+
+            # Calculate Moore-Penrose_Pseudoinverse, store it for future improvement, and use it to find least-squares-optimal W3 in the equation Y = A_x @ W_3
             self.A_cross_old = torch.pinverse(A_x)
             self.W3 = self.A_cross_old @ Y
 
@@ -162,7 +130,7 @@ class SBLS2:
             self.initialized = True
 
         else:
-            # store target vector for future improvement and expansion of the network
+            # append input matrix and target vector for future improvement and expansion of the network
             torch.cat((self.Y_old, target))
             torch.cat((self.A_old, A_x))
 
