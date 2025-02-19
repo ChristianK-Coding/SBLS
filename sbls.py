@@ -27,8 +27,9 @@ class SBLS2:
         self.training_samples = 0
 
         self.initialized = False    # Initialization state of the network. Upon creation, the final layer will still be random. Only when feeding data will W3 be solved to minimize the Least-Squares-Error. add_enhancement_nodes(), add_feature_nodes() and simpify() are only available when initialized = True.
-        self.A_old = None
-        self.Y_old = None           # stores old target values of training data for future optimization
+        self.A_old = None           # stores all input values of trainin data for future optimization
+        self.Z_post_old = None      # stores all Z_post values for adding new feature layer nodes
+        self.Y_old = None           # stores all target values of training data for future optimization
         self.A_cross_old = None     # Most important member, the pseudo-inverse of matrix A. Is used to calculate the optimal W3 according to ridge regression based on training data. Upon adding new training data or adding nodes in the network, it can be incrementally updated
 
         # initialize weights and biases
@@ -62,7 +63,7 @@ class SBLS2:
 
         input = torch.reshape(input, (-1, self.input_size))
 
-        A = self.__calc_A(input)
+        _, A = self.__calc_Z_post_and_A(input)
 
         return torch.softmax(A @ self.W3, 1)
 
@@ -76,7 +77,7 @@ class SBLS2:
         return (tmp - min) / (max - min)
 
 
-    def __calc_A(self, input: torch.Tensor) -> torch.Tensor:
+    def __calc_Z_post_and_A(self, input: torch.Tensor) -> torch.Tensor:
 
         Z_post = self.spikegen(input @ self.W1 + self.B1, num_steps=self.simulation_steps)  # Z_pre = input @ self.W1 + self.B1
 
@@ -96,10 +97,10 @@ class SBLS2:
             h_post_total_list.append(self.__aggregate(torch.stack(h_post_window_list, dim=0)))
 
         # concatenate Z_post and h_post_total_list along dim 1 (layer size) to create A
-        Z_post = [self.__aggregate(Z_post)]
-        Z_post.extend(h_post_total_list)
+        A_list = [self.__aggregate(Z_post)]
+        A_list.extend(h_post_total_list)
 
-        return torch.cat(Z_post, 1)
+        return Z_post, torch.cat(A_list, 1)
 
 
     def add_new_data(self, data: list[torch.Tensor, torch.Tensor]):
@@ -109,14 +110,15 @@ class SBLS2:
         input = torch.reshape(input, (-1, self.input_size))
 
         # compute A_x for new data
-        A_x = self.__calc_A(input)
+        Z_post, A_x = self.__calc_Z_post_and_A(input)
 
         # encode Y as a one-hot vector of targets
         Y = nn.functional.one_hot(target, num_classes=10).float()
 
         # if this is the first batch of data, A_new, A_cross_new and W3 are computed differently than if not
         if not self.initialized:
-            # store input matrix and target vector for future improvement and expansion of the network
+            # store Z_post, A and Y for future improvement and expansion of the network
+            self.Z_post_old = Z_post
             self.A_old = A_x
             self.Y_old = target
 
@@ -129,6 +131,7 @@ class SBLS2:
 
         else:
             # append input matrix and target vector for future improvement and expansion of the network
+            torch.cat((self.Z_post_old, Z_post))
             torch.cat((self.Y_old, target))
             torch.cat((self.A_old, A_x))
 
