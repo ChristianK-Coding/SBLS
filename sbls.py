@@ -199,8 +199,3 @@ class SBLS2:
         Y = nn.functional.one_hot(self.Y_old, num_classes=10).float()
 
         self.W3 = torch.cat((self.W3 - D @ B @ Y, B @ Y), dim=0)
-    
-    def simplify(self):
-        # check if network is initialized
-        if not self.initialized:
-            raise Exception("Cannot simplify while network is not initialized! Initialize by adding some training data.")
