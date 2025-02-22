@@ -28,7 +28,7 @@ class SBLS2:
 
         self.initialized = False    # Initialization state of the network. Upon creation, the final layer will still be random. Only when feeding data will W3 be solved to minimize the Least-Squares-Error. add_enhancement_nodes(), add_feature_nodes() and simpify() are only available when initialized = True.
         self.A_old = None           # stores all input values of trainin data for future optimization
-        self.Z_post_old = None      # stores all Z_post values for adding new feature layer nodes
+        self.Z_post_old = None      # stores all Z_post values for adding new feature layer nodes (before aggregation)
         self.Y_old = None           # stores all target values of training data for future optimization
         self.A_cross_old = None     # Most important member, the pseudo-inverse of matrix A. Is used to calculate the optimal W3 according to ridge regression based on training data. Upon adding new training data or adding nodes in the network, it can be incrementally updated
 
@@ -122,7 +122,7 @@ class SBLS2:
             self.A_old = A_x
             self.Y_old = target
 
-            # Calculate Moore-Penrose_Pseudoinverse, store it for future improvement, and use it to find least-squares-optimal W3 in the equation Y = A_x @ W_3
+            # Calculate Moore-Penrose-Pseudoinverse, store it for future improvement, and use it to find least-squares-optimal W3 in the equation Y = A_x @ W_3
             self.A_cross_old = torch.pinverse(A_x)
             self.W3 = self.A_cross_old @ Y
 
@@ -131,9 +131,9 @@ class SBLS2:
 
         else:
             # append input matrix and target vector for future improvement and expansion of the network
-            torch.cat((self.Z_post_old, Z_post))
-            torch.cat((self.Y_old, target))
-            torch.cat((self.A_old, A_x))
+            self.Z_post_old = torch.cat((self.Z_post_old, Z_post), dim=1)
+            self.Y_old = torch.cat((self.Y_old, target), dim=0)
+            self.A_old = torch.cat((self.A_old, A_x), dim=0)
 
             D_T = A_x @ self.A_cross_old
 
@@ -156,41 +156,39 @@ class SBLS2:
             raise Exception("Cannot add nodes while network is not initialized! Initialize by adding some training data.")
         
         
-
-    def add_enhancement_nodes(self, expansion_size: int):
+    def add_enhancement_windows(self, num_new_windows: int):
         # check if network is initialized
         if not self.initialized:
             raise Exception("Cannot add nodes while network is not initialized! Initialize by adding some training data.")
+        
+        H_post_new_list = []
 
-        # retrieve old Z_post (output from the feature layer)
-        Z_post = self.A_old[:self.num_feature_nodes]
+        for i in range(num_new_windows):
+            # generate new random weights between the feature layer and the new enhancement nodes
+            self.W2_list.append(torch.zeros((self.num_feature_nodes, self.enhancement_nodes_per_window)).uniform_(-self.weight_range_W2, self.weight_range_W2))
+            self.B2_list.append(torch.zeros(self.enhancement_nodes_per_window).uniform_(-self.weight_range_W2, self.weight_range_W2))
 
-        # generate new random weights between the feature layer and the new enhancement nodes
-        W2_x = torch.zeros((self.num_feature_nodes, expansion_size)).uniform_(-self.weight_range_W2, self.weight_range_W2)
-        B2_x = torch.zeros(expansion_size).uniform_(-self.weight_range_W2, self.weight_range_W2)
+            # calculate the output of the new nodes
+            h_pre_x = torch.einsum('abc,cd->abd', self.Z_post_old, self.W2_list[-1]) + self.B2_list[-1]
 
-        # calculate the output of the new nodes
-        H_pre_x = torch.einsum('abc,cd->abd', Z_post, W2_x) + B2_x
+            h_post_x_list = []
 
-        h_post_x_list = []
+            for timestep in h_pre_x:    # timestep is (batch_size, enhancement_nodes_per_window)
+                h_post_x_list.append(self.lif(timestep))
 
-        for elem in H_pre_x:
-            h_post_x = self.lif(elem)
-            h_post_x_list.append(h_post_x)
+            h_post_x = torch.stack(h_post_x_list, dim=0)    # h_post_x is (timestep, batch_size, enhancement_nodes_per_window)
 
-        H_post_x = torch.stack(h_post_x_list, dim=0)
+            agg = self.__aggregate(h_post_x)    # agg is (batch_size, enhancement_nodes_per_window)
 
-        H_post_x_compact = self.__aggregate(H_post_x)
+            H_post_new_list.append(agg)  
 
-        # extend self.W2 and self.B2 with the new random ones
-        torch.cat((self.W2, W2_x), dim=0)
-        torch.cat((self.B2, B2_x), dim=0)
+        H_post_new = torch.cat(H_post_new_list, dim=1)  # H_post_new is (batch_size, num_new_windows * enhancement_nodes_per_window)
 
         # extend A_old with the new enhancement layer output
-        torch.cat((self.A_old, H_post_x_compact), dim=1)
+        self.A_old = torch.cat((self.A_old, H_post_new), dim=1)
 
         # calculate the new pseudoinverse incrementally
-        D = self.A_cross_old @ H_post_x_compact
+        D = self.A_cross_old @ H_post_new
         B = torch.linalg.solve(torch.eye(D.shape[0]) + D.T @ D, D.T @ self.A_cross_old)
 
         self.A_cross_old = torch.cat((self.A_cross_old - D @ B, B), dim=0)
