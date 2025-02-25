@@ -19,7 +19,7 @@ from sbls import SBLS2
 
 # os.system('clear')
 
-# torch.set_printoptions(profile="full")
+torch.set_printoptions(profile="full")
 
 # dml = torch_directml.device()
 
@@ -34,8 +34,8 @@ def show_img(img):
 
 # import dataset
 num_steps = 30
-batch_size_train = 60000
-batch_size_test = 1000
+batch_size_train = 30000
+batch_size_test = 10000
 data_path = '/home/christian/data/mnist'
 
 transform = transforms.Compose([
@@ -60,7 +60,7 @@ loss_history = []
 t1 = datetime.datetime.now()
 
 
-sbls = SBLS2(input_size=28*28, output_size=10, simulation_steps=num_steps, initital_feature_size=100, initial_enhancement_size_per_window=100, initial_enhancement_window_num=20)
+sbls = SBLS2(input_size=28*28, output_size=10, simulation_steps=num_steps, initital_feature_size=80, enhancement_nodes_per_window=100, initial_enhancement_window_num=20)
 
 # train_input, train_target = next(iter(train_loader))
 
@@ -74,26 +74,46 @@ sbls = SBLS2(input_size=28*28, output_size=10, simulation_steps=num_steps, initi
 
 #     sbls.add_new_data((train_input, train_target))
 
+data = next(iter(train_loader))
 
-for count, data in enumerate(train_loader):
-    print(f"loop {count}")
+print(f"Training network...")
+sbls.add_new_data(data)
+print(f"Training done!")
+
+for i in range(10):
+    print(f"loop {i}")
 
     # Testing accuracy
     test_input, test_targets = next(iter(test_loader))
-    # print(test_targets[0:10])
 
     test_output = sbls(test_input)
-    # print(test_output[0:10])
 
-    values, indices = torch.max(test_output, 1)
+    _, indices = torch.max(test_output, 1)
     print(f"accuracy:{(indices == test_targets).sum() / batch_size_test}")
-    # print(indices[0:10])
 
-    test_loss = loss(test_output, test_targets)
-    print(f"loss in this loop: {test_loss}")
-    loss_history.append(test_loss)
+    # Extend enhancement layer
+    sbls.add_enhancement_windows(2)
 
-    sbls.add_new_data(data)
+
+# for count, data in enumerate(train_loader):
+#     print(f"loop {count}")
+
+#     # Testing accuracy
+#     test_input, test_targets = next(iter(test_loader))
+#     # print(test_targets[0:10])
+
+#     test_output = sbls(test_input)
+#     # print(test_output[0:10])
+
+#     values, indices = torch.max(test_output, 1)
+#     print(f"accuracy:{(indices == test_targets).sum() / batch_size_test}")
+#     # print(indices[0:10])
+
+#     test_loss = loss(test_output, test_targets)
+#     print(f"loss in this loop: {test_loss}")
+#     loss_history.append(test_loss)
+
+#     sbls.add_new_data(data)
 
 
 
