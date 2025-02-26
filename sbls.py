@@ -64,9 +64,6 @@ class SBLS2:
 
         _, A = self.__calc_Z_post_and_A(input)
 
-        print(A.shape)
-        print(f"Rank: {torch.linalg.matrix_rank(A)}")
-
         return A @ self.W3
         #return torch.softmax(A @ self.W3, 1)
 
@@ -82,7 +79,7 @@ class SBLS2:
 
     def __calc_Z_post_and_A(self, input: torch.Tensor) -> torch.Tensor:
 
-        Z_post = self.spikegen(input @ self.W1 + self.B1, num_steps=self.simulation_steps)  # Z_pre = input @ self.W1 + self.B1
+        Z_post = self.spikegen(input @ self.W1 + self.B1, num_steps=self.simulation_steps)  # Z_pre = input @ self.W1 + self.B1 # no sparse autoencoding needed, spikegen is already sparse
         h_post_total_list = []
 
         for w2_window, b2_window in zip(self.W2_list, self.B2_list):
@@ -106,6 +103,16 @@ class SBLS2:
         A_list.extend(h_post_total_list)
 
         return Z_post, torch.cat(A_list, 1)
+    
+
+    # check if a matrix is zero by employing a modified max norm which terminates prematurely with false if one elem absolute is > epsilon, true if all elems >= epsilon
+    def __is_zero(self, matrix: torch.Tensor, epsilon: float) -> bool:
+        for row in matrix:
+            for elem in row:
+                if abs(elem) > epsilon:
+                    return False
+                
+        return True
 
 
     def add_new_data(self, data: list[torch.Tensor, torch.Tensor]):
@@ -158,6 +165,8 @@ class SBLS2:
         if not self.initialized:
             raise Exception("Cannot add nodes while network is not initialized! Initialize by adding some training data.")
         
+
+        
         
     def add_enhancement_windows(self, num_new_windows: int):
         # check if network is initialized
@@ -189,18 +198,29 @@ class SBLS2:
 
         H_post_new = torch.cat(H_post_new_list, dim=1)  # H_post_new is (batch_size, num_new_windows * enhancement_nodes_per_window)
 
-        # extend A_old with the new enhancement layer output
-        self.A_old = torch.cat((self.A_old, H_post_new), dim=1)
-
         # update the pseudoinverse incrementally
         D = self.A_cross_old @ H_post_new
-        B = torch.linalg.solve(torch.eye(D.shape[1]) + D @ D.T, D @ self.A_cross_old)
-        self.A_cross_old = torch.cat((self.A_cross_old - D.T @ B, B), dim=0)
+
+        C = H_post_new - self.A_old @ D
+
+        if self.__is_zero(C, 10e-10):
+            print("is zero")
+            B = torch.linalg.solve(torch.eye(D.shape[1]) + D @ D.T, D @ self.A_cross_old)
+
+        else:
+            print("is NOT zero")
+            B = torch.pinverse(C)
+
+        self.A_cross_old = torch.cat((self.A_cross_old - D @ B, B), dim=0)
         # self.A_cross_old = torch.pinverse(self.A_old)
 
         # update W3 incrementally
         Y = nn.functional.one_hot(self.target_old, num_classes=10).float()
-        self.W3 = torch.cat((self.W3 - D.T @ B @ Y, B @ Y), dim=0)
+        self.W3 = torch.cat((self.W3 - D @ B @ Y, B @ Y), dim=0)
         # self.W3 = self.A_cross_old @ Y
+
+        # extend A_old with the new enhancement layer output
+        self.A_old = torch.cat((self.A_old, H_post_new), dim=1) # TODO: this needs to go behind the calculation of C as it needs the old A_old
+
         # update enhancement window num
         self.num_enhancement_windows += num_new_windows
