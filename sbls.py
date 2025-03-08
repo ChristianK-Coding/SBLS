@@ -27,6 +27,7 @@ class SBLS2:
         self.training_samples = 0
 
         self.initialized = False    # Initialization state of the network. Upon creation, the final layer will still be random. Only when feeding data will W3 be solved to minimize the Least-Squares-Error. add_enhancement_nodes(), add_feature_nodes() and simpify() are only available when initialized = True.
+        self.feature_layer_increased = False
         self.A_old = None           # stores all input values of trainin data for future optimization
         self.Z_post_old = None      # stores all Z_post values for adding new feature layer nodes (before aggregation)
         self.target_old = None           # stores all target values of training data for future optimization
@@ -116,6 +117,9 @@ class SBLS2:
 
 
     def add_new_data(self, data: list[torch.Tensor, torch.Tensor]):
+
+        if self.feature_layer_increased:
+            raise Exception("Cannot add new data after feature layer increase!")
         
         input, target = data
 
@@ -160,10 +164,17 @@ class SBLS2:
         print(f"num samples after: {self.training_samples}")
 
 
-    def add_feature_nodes(self):
+    def add_feature_nodes(self, num_new_nodes: int):
         # check if network is initialized
         if not self.initialized:
             raise Exception("Cannot add nodes while network is not initialized! Initialize by adding some training data.")
+
+        if self.feature_layer_increased:
+            raise Exception("Can only expand feature nodes once!")
+
+        
+
+        self.feature_layer_increased = True
         
 
         
@@ -172,6 +183,9 @@ class SBLS2:
         # check if network is initialized
         if not self.initialized:
             raise Exception("Cannot add nodes while network is not initialized! Initialize by adding some training data.")
+
+        if self.feature_layer_increased:
+            raise Exception("Cannot add new enhancement node once feature layer was increased!")
         
         # Calculate H_post for new nodes
         H_post_new_list = []
