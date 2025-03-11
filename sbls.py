@@ -16,7 +16,7 @@ def show_img(img):
     plot.imshow(img, cmap='gray', aspect="auto", interpolation='none')
     plot.show()
 
-class SBLS2:
+class SBLS:
     def __init__(self, input_size: int, output_size: int, simulation_steps: int, initital_feature_size: int, enhancement_nodes_per_window: int, initial_enhancement_window_num: int):
         self.input_size = input_size
         self.output_size = output_size
@@ -75,7 +75,7 @@ class SBLS2:
         min, _ = torch.min(tmp, 1, keepdim=True)
         max, _ = torch.max(tmp, 1, keepdim=True)
 
-        return (tmp - min) / (max - min)
+        return torch.nan_to_num((tmp - min) / (max - min))
 
 
     def __calc_Z_post_and_A(self, input: torch.Tensor) -> torch.Tensor:
