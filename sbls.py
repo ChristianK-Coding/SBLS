@@ -17,13 +17,14 @@ def show_img(img):
     plot.show()
 
 class SBLS:
-    def __init__(self, input_size: int, output_size: int, simulation_steps: int, initital_feature_size: int, enhancement_nodes_per_window: int, initial_enhancement_window_num: int):
+    def __init__(self, input_size: int, output_size: int, simulation_steps: int, initital_feature_size: int, enhancement_nodes_per_window: int, initial_enhancement_window_num: int, output_is_one_hot: bool):
         self.input_size = input_size
         self.output_size = output_size
         self.simulation_steps = simulation_steps
         self.num_feature_nodes = initital_feature_size
         self.num_enhancement_windows = initial_enhancement_window_num
         self.enhancement_nodes_per_window = enhancement_nodes_per_window
+        self.output_is_one_hot = output_is_one_hot
         self.training_samples = 0
 
         self.initialized = False    # Initialization state of the network. Upon creation, the final layer will still be random. Only when feeding data will W3 be solved to minimize the Least-Squares-Error. add_enhancement_nodes(), add_feature_nodes() and simpify() are only available when initialized = True.
@@ -126,8 +127,11 @@ class SBLS:
         input = torch.reshape(input, (-1, self.input_size))
         # compute A_x for new data
         Z_post, A_x = self.__calc_Z_post_and_A(input)
-        # encode Y as a one-hot vector of targets
-        Y = nn.functional.one_hot(target, num_classes=10).float()
+        if self.output_is_one_hot:
+            # encode Y as a one-hot vector of targets
+            Y = nn.functional.one_hot(target, num_classes=10).float()
+        else:
+            Y = target
 
         # if this is the first batch of data, A_new, A_cross_new and W3 are computed differently than if not
         if not self.initialized:
@@ -137,7 +141,7 @@ class SBLS:
             self.target_old = target
 
             # Calculate Moore-Penrose-Pseudoinverse, store it for future improvement, and use it to find least-squares-optimal W3 in the equation Y = A_x @ W_3
-            self.A_cross_old = torch.pinverse(A_x)
+            self.A_cross_old = torch.pinverse(input=A_x, rcond=0.01)
             self.W3 = self.A_cross_old @ Y
 
             # set initialized to true to signal that the network is not ouputting random answers anymore. This makes add_enhancement_nodes(), add_feature_nodes() and simpify() available.
@@ -229,7 +233,10 @@ class SBLS:
         # self.A_cross_old = torch.pinverse(self.A_old)
 
         # update W3 incrementally
-        Y = nn.functional.one_hot(self.target_old, num_classes=10).float()
+        if self.output_is_one_hot:
+            Y = nn.functional.one_hot(self.target_old, num_classes=10).float()
+        else:
+            Y = self.target_old
         self.W3 = torch.cat((self.W3 - D @ B @ Y, B @ Y), dim=0)
         # self.W3 = self.A_cross_old @ Y
 
